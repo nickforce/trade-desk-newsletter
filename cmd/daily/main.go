@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"trade-desk-newsletter/pkg/mailer"
 	"trade-desk-newsletter/pkg/models"
 	"trade-desk-newsletter/pkg/render"
 	"trade-desk-newsletter/pkg/state"
@@ -110,10 +109,10 @@ func main() {
 	}
 	fmt.Println("Wrote", outPath)
 
-	subj := fmt.Sprintf("In Play — %s", today)
-	if err := mailer.SendMarkdown(subj, md); err != nil {
-		panic(err)
-	}
+	// subj := fmt.Sprintf("In Play — %s", today)
+	// if err := mailer.SendMarkdown(subj, md); err != nil {
+	// 	panic(err)
+	// }
 }
 
 func prevDateKey(st *models.State, today string) string {

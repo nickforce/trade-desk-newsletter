@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"trade-desk-newsletter/pkg/mailer"
 	"trade-desk-newsletter/pkg/models"
 	"trade-desk-newsletter/pkg/render"
 	"trade-desk-newsletter/pkg/state"
@@ -119,10 +118,10 @@ func main() {
 	}
 	fmt.Println("Wrote", outPath)
 
-	subj := fmt.Sprintf("Weekly Playbook — %s → %s", weekStart, weekEnd)
-	if err := mailer.SendMarkdown(subj, md); err != nil {
-		panic(err)
-	}
+	// subj := fmt.Sprintf("Weekly Playbook — %s → %s", weekStart, weekEnd)
+	// if err := mailer.SendMarkdown(subj, md); err != nil {
+	// 	panic(err)
+	// }
 }
 
 func diff(prev, today []string) ([]string, []string) {

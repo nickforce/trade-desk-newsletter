@@ -16,19 +16,16 @@ permissions:
 
 jobs:
   daily:
-    # Run only when triggered by weekday crons or manual dispatch
     if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '0 10 * * 1-5' || github.event.schedule == '0 11 * * 1-5')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # Recreate saved Substack session
       - name: Restore Substack session
         run: |
           mkdir -p secrets
           echo "${{ secrets.SUBSTACK_STATE_B64 }}" | base64 -d > secrets/substack_state.json
 
-      # Randomize between 0–120 minutes, then ensure current CT hour is 5–6
       - name: Random delay (0–120 min)
         if: github.event_name != 'workflow_dispatch'
         run: |
@@ -36,12 +33,11 @@ jobs:
           echo "Sleeping $SECS sec..."
           sleep "$SECS"
 
-
       - name: Guard CT window (5–7am)
         id: ctguard
         run: |
           HOUR=$(TZ=America/Chicago date +%H)
-          echo "CT hour now: $HOUR" 
+          echo "CT hour now: $HOUR"
           if [ "$HOUR" -ge 5 ] && [ "$HOUR" -lt 7 ]; then
             echo "ok=true" >> $GITHUB_OUTPUT
           else
@@ -54,10 +50,10 @@ jobs:
           echo "Outside 5–7am CT after random delay — exiting." >> $GITHUB_STEP_SUMMARY
           exit 0
 
-      # Node for scraper & poster
       - name: Setup Node
         uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with:
+          node-version: '20'
 
       - name: Install scraper deps
         working-directory: tools
@@ -69,21 +65,16 @@ jobs:
           npm ci || npm i
           npx playwright install chromium
 
-      # Pull latest basket
       - name: Scrape holdings → data/rotations.json
         run: node tools/scrape-ulty.mjs
 
-      # Go for daily generator
       - name: Setup Go
         uses: actions/setup-go@v5
-        with: { go-version: '1.22.x' }
+        with:
+          go-version: '1.22.x'
 
       - name: Build daily note (skip output if unchanged)
         id: build
-        env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-          SUBSTACK_POST_EMAIL: ${{ secrets.SUBSTACK_POST_EMAIL }}
         run: |
           rm -f out/daily-*.md
           go run ./cmd/daily || true
@@ -95,7 +86,6 @@ jobs:
             echo "ℹ️ Daily: no changes — no note posted." >> $GITHUB_STEP_SUMMARY
           fi
 
-      # Post to Substack (draft for now). Flip SUBSTACK_MODE=publish when ready.
       - name: Post to Substack (draft)
         id: post
         if: steps.build.outputs.changed == 'true'
@@ -108,14 +98,12 @@ jobs:
           node scripts/post-substack.mjs $(ls -t out/daily-*.md | head -n1)
 
       - name: Upload debug artifacts
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-artifacts
+          name: daily-artifacts
           path: out/
 
-
-      # Open an issue if the session expired (poster failed)
       - name: Open Issue if session expired
         if: steps.build.outputs.changed == 'true' && steps.post.outcome == 'failure'
         uses: actions/github-script@v7
@@ -138,7 +126,6 @@ jobs:
             })
 
   weekly:
-    # Run only when Sunday crons or manual dispatch
     if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '15 14 * * 0' || github.event.schedule == '15 15 * * 0')
     runs-on: ubuntu-latest
     steps:
@@ -151,7 +138,8 @@ jobs:
 
       - name: Setup Node
         uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with:
+          node-version: '20'
 
       - name: Install poster deps
         working-directory: scripts
@@ -161,20 +149,17 @@ jobs:
 
       - name: Setup Go
         uses: actions/setup-go@v5
-        with: { go-version: '1.22.x' }
+        with:
+          go-version: '1.22.x'
 
       - name: Build weekly playbook
         id: weekly
-        env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-          SUBSTACK_POST_EMAIL: ${{ secrets.SUBSTACK_POST_EMAIL }}
         run: |
           rm -f out/weekly-*.md
           go run ./cmd/weekly
           echo "✅ Weekly playbook generated." >> $GITHUB_STEP_SUMMARY
 
-      - name: Post weekly to Substack (draft while testing)
+      - name: Post weekly to Substack (draft)
         id: postw
         continue-on-error: true
         env:
@@ -183,6 +168,13 @@ jobs:
           POST_TITLE_PREFIX: "Weekly Playbook — "
         run: |
           node scripts/post-substack.mjs $(ls -t out/weekly-*.md | head -n1)
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-artifacts
+          path: out/
 
       - name: Open Issue if session expired
         if: steps.postw.outcome == 'failure'

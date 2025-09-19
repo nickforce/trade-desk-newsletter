@@ -1,0 +1,35 @@
+# In Play — {{ .Date }}
+
+### Stocks on the Radar
+{{- if or .Added .Removed }}
+{{- if .Added }}
+{{ range .Added -}}
+- **{{ . }}** — surfaced today
+{{ end }}
+{{ end -}}
+{{- if .Removed }}
+{{ range .Removed -}}
+- **{{ . }}** — rotated out today
+{{ end }}
+{{ end -}}
+{{ else }}
+_No new names surfaced today. Radar unchanged._
+{{ end }}
+
+### Conviction Signals
+{{- if .Convictions }}
+{{ range .Convictions -}}
+- **{{ .Ticker }}** — present {{ .Days }} days
+{{ end }}
+{{ else }}
+_No conviction names to highlight today._
+{{ end }}
+
+### Quick Flips
+{{- if .QuickFlips }}
+{{ range .QuickFlips -}}
+- **{{ .Ticker }}** — exited after {{ .Days }} days
+{{ end }}
+{{ else }}
+_No quick flips to note today._
+{{ end }}

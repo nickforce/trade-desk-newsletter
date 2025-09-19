@@ -1,0 +1,9 @@
+{
+  "name": "trade-desk-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "puppeteer": "^22.15.0",
+    "csv-parser": "^3.0.0"
+  }
+}

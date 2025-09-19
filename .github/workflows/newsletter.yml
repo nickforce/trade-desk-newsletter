@@ -1,0 +1,192 @@
+name: Trade Desk Newsletter
+
+on:
+  # Two UTC crons to cover DST for the US Central window:
+  # 10:00 UTC ~ 5am CDT (summer), 11:00 UTC ~ 5am CST (winter)
+  schedule:
+    - cron: '0 10 * * 1-5'   # weekdays
+    - cron: '0 11 * * 1-5'   # weekdays
+    - cron: '15 14 * * 0'    # Sunday 9:15am CT during CDT (UTC-5)
+    - cron: '15 15 * * 0'    # Sunday 9:15am CT during CST (UTC-6)
+  workflow_dispatch: {}
+
+jobs:
+  daily:
+    # Run only when triggered by weekday crons or manual dispatch
+    if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '0 10 * * 1-5' || github.event.schedule == '0 11 * * 1-5')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Recreate saved Substack session
+      - name: Restore Substack session
+        run: |
+          mkdir -p secrets
+          echo "${{ secrets.SUBSTACK_STATE_B64 }}" | base64 -d > secrets/substack_state.json
+
+      # Randomize between 0–120 minutes, then ensure current CT hour is 5–6
+      - name: Random delay (0–120 min)
+        run: |
+          SECS=$(( RANDOM % 7200 ))
+          echo "Sleeping $SECS sec..."
+          sleep "$SECS"
+
+      - name: Guard CT window (5–7am)
+        id: ctguard
+        run: |
+          HOUR=$(TZ=America/Chicago date +%H)
+          echo "CT hour now: $HOUR" 
+          if [ "$HOUR" -ge 5 ] && [ "$HOUR" -lt 7 ]; then
+            echo "ok=true" >> $GITHUB_OUTPUT
+          else
+            echo "ok=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Stop if outside window
+        if: steps.ctguard.outputs.ok != 'true'
+        run: |
+          echo "Outside 5–7am CT after random delay — exiting." >> $GITHUB_STEP_SUMMARY
+          exit 0
+
+      # Node for scraper & poster
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Install scraper deps
+        working-directory: tools
+        run: npm ci || npm i
+
+      - name: Install poster deps
+        working-directory: scripts
+        run: |
+          npm ci || npm i
+          npx playwright install chromium
+
+      # Pull latest basket
+      - name: Scrape holdings → data/rotations.json
+        run: node tools/scrape-ulty.mjs
+
+      # Go for daily generator
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+
+      - name: Build daily note (skip output if unchanged)
+        id: build
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          SUBSTACK_POST_EMAIL: ${{ secrets.SUBSTACK_POST_EMAIL }}
+        run: |
+          rm -f out/daily-*.md
+          go run ./cmd/daily || true
+          if ls out/daily-*.md 1> /dev/null 2>&1; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "✅ Daily: changes detected — note generated." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ Daily: no changes — no note posted." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # Post to Substack (draft for now). Flip SUBSTACK_MODE=publish when ready.
+      - name: Post to Substack (draft)
+        id: post
+        if: steps.build.outputs.changed == 'true'
+        continue-on-error: true
+        env:
+          SUBSTACK_STATE_PATH: secrets/substack_state.json
+          SUBSTACK_MODE: draft
+          POST_TITLE_PREFIX: "In Play — "
+        run: |
+          node scripts/post-substack.mjs $(ls -t out/daily-*.md | head -n1)
+
+      # Open an issue if the session expired (poster failed)
+      - name: Open Issue if session expired
+        if: steps.build.outputs.changed == 'true' && steps.post.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Substack session refresh required',
+              labels: ['substack','action-required'],
+              body: [
+                'The headless post step failed (likely session expired).',
+                '',
+                '**Refresh steps:**',
+                '1) Run locally: `node scripts/save-substack-session.mjs` and log in.',
+                '2) Base64 the new state: `base64 -w 0 secrets/substack_state.json > substack_state.b64`',
+                '3) Update repo secret **SUBSTACK_STATE_B64** with the new value.',
+                '4) Re-run this workflow.',
+              ].join('\n')
+            })
+
+  weekly:
+    # Run only when Sunday crons or manual dispatch
+    if: github.event_name == 'workflow_dispatch' || (github.event.schedule == '15 14 * * 0' || github.event.schedule == '15 15 * * 0')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore Substack session
+        run: |
+          mkdir -p secrets
+          echo "${{ secrets.SUBSTACK_STATE_B64 }}" | base64 -d > secrets/substack_state.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      - name: Install poster deps
+        working-directory: scripts
+        run: |
+          npm ci || npm i
+          npx playwright install chromium
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with: { go-version: '1.22.x' }
+
+      - name: Build weekly playbook
+        id: weekly
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          SUBSTACK_POST_EMAIL: ${{ secrets.SUBSTACK_POST_EMAIL }}
+        run: |
+          rm -f out/weekly-*.md
+          go run ./cmd/weekly
+          echo "✅ Weekly playbook generated." >> $GITHUB_STEP_SUMMARY
+
+      - name: Post weekly to Substack (draft while testing)
+        id: postw
+        continue-on-error: true
+        env:
+          SUBSTACK_STATE_PATH: secrets/substack_state.json
+          SUBSTACK_MODE: draft
+          POST_TITLE_PREFIX: "Weekly Playbook — "
+        run: |
+          node scripts/post-substack.mjs $(ls -t out/weekly-*.md | head -n1)
+
+      - name: Open Issue if session expired
+        if: steps.postw.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Substack session refresh required (weekly)',
+              labels: ['substack','action-required'],
+              body: [
+                'Weekly headless post failed (likely session expired).',
+                '',
+                '**Refresh steps:**',
+                '1) Run locally: `node scripts/save-substack-session.mjs` and log in.',
+                '2) Base64 the new state: `base64 -w 0 secrets/substack_state.json > substack_state.b64`',
+                '3) Update repo secret **SUBSTACK_STATE_B64**.',
+                '4) Re-run this workflow.',
+              ].join('\n')
+            })

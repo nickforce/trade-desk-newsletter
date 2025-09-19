@@ -1,0 +1,47 @@
+# Weekly Playbook — {{ .WeekStart }} → {{ .WeekEnd }}
+
+### Radar Highlights
+{{- if .Radar }}
+{{ range .Radar -}}
+- **{{ .Ticker }}** — {{ .Note }}
+{{ end }}
+{{ else }}
+_No new names highlighted this week._
+{{ end }}
+
+### Conviction List
+{{- if .Convictions }}
+{{ range .Convictions -}}
+- **{{ .Ticker }}** — present {{ .Days }} days
+{{ end }}
+{{ else }}
+_No conviction names reached threshold this week._
+{{ end }}
+
+### Quick Rotations
+{{- if .QuickFlips }}
+{{ range .QuickFlips -}}
+- **{{ .Ticker }}** — exited after {{ .Days }} days
+{{ end }}
+{{ else }}
+_No quick flips to note._
+{{ end }}
+
+### Sector Regime
+{{- if .SectorPulse }}
+Change in count vs last week:
+{{ range .SectorPulse -}}
+- **{{ .Sector }}**: {{ .Delta }} names
+{{ end }}
+{{ else }}
+_No sector shifts to report._
+{{ end }}
+
+### Forward Watchlist
+{{- if .Watchlist }}
+{{ range .Watchlist -}}
+- **{{ .Ticker }}** — {{ .Reason }}
+{{ end }}
+{{ else }}
+_No specific watchlist items for the coming week._
+{{ end }}

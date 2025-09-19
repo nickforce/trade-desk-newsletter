@@ -26,10 +26,12 @@ jobs:
 
       # Randomize between 0–120 minutes, then ensure current CT hour is 5–6
       - name: Random delay (0–120 min)
+        if: github.event_name != 'workflow_dispatch'
         run: |
           SECS=$(( RANDOM % 7200 ))
           echo "Sleeping $SECS sec..."
           sleep "$SECS"
+
 
       - name: Guard CT window (5–7am)
         id: ctguard

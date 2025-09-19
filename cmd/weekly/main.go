@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"trade-desk-newsletter/pkg/mailer"
@@ -107,7 +108,9 @@ func main() {
 	fmt.Println(md)
 
 	// --- write file ---
-	outPath := fmt.Sprintf("out/weekly-%s.md", weekEnd)
+	safeDate := strings.ReplaceAll(weekEnd, "/", "-")
+	outPath := fmt.Sprintf("out/weekly-%s.md", safeDate)
+
 	if err := os.MkdirAll("out", 0o755); err != nil {
 		panic(err)
 	}

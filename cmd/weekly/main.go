@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"trade-desk-newsletter/pkg/mailer"
@@ -24,50 +22,46 @@ func init() {
 }
 
 func main() {
-	// Load rotations.json
-	b, err := os.ReadFile("data/rotations.json")
-	must(err)
-	var payload models.RotationsPayload
-	must(json.Unmarshal(b, &payload))
-
 	st := state.New("data/state.json")
 	s, err := st.Load()
 	must(err)
 
-	today := payload.LatestDate
-	todayHoldings := payload.StockTickers
-
-	// Get yesterday's holdings
-	prevDay := prevDateKey(s, today)
-	prevHoldings := s.HoldingsByDay[prevDay]
-
-	// Save today's holdings
-	s.HoldingsByDay[today] = todayHoldings
-	// Update first_seen/last_seen
-	for _, t := range todayHoldings {
-		if _, ok := s.FirstSeen[t]; !ok {
-			s.FirstSeen[t] = today
-		}
-		s.LastSeen[t] = today
+	// Find latest date in holdings
+	dates := make([]string, 0, len(s.HoldingsByDay))
+	for d := range s.HoldingsByDay {
+		dates = append(dates, d)
 	}
-	must(st.Save(s))
-
-	// Compute adds/removals
-	added, removed := diff(prevHoldings, todayHoldings)
-
-	// If no changes, skip posting
-	if len(added) == 0 && len(removed) == 0 {
-		fmt.Println("No changes today. Skipping Substack/Discord post.")
+	sort.Strings(dates)
+	if len(dates) == 0 {
+		fmt.Println("No data in state.json yet. Exiting.")
 		return
+	}
+	latest := dates[len(dates)-1]
+
+	// Week window: last 7 days from latest
+	end, _ := time.Parse("2006-01-02", latest)
+	start := end.AddDate(0, 0, -6)
+	weekStart := start.Format("2006-01-02")
+	weekEnd := latest
+
+	// Radar: tickers added or removed during this window
+	radar := []map[string]string{}
+	for i := 1; i < len(dates); i++ {
+		prev := s.HoldingsByDay[dates[i-1]]
+		today := s.HoldingsByDay[dates[i]]
+		added, removed := diff(prev, today)
+		for _, a := range added {
+			radar = append(radar, map[string]string{"Ticker": a, "Note": "surfaced this week"})
+		}
+		for _, r := range removed {
+			radar = append(radar, map[string]string{"Ticker": r, "Note": "rotated out this week"})
+		}
 	}
 
 	// Convictions: names present >= 15 days
 	convictions := []models.Tenured{}
 	for ticker, firstSeen := range s.FirstSeen {
-		lastSeen, ok := s.LastSeen[ticker]
-		if !ok {
-			continue
-		}
+		lastSeen := s.LastSeen[ticker]
 		days := tenorDays(firstSeen, lastSeen)
 		if days >= 15 {
 			convictions = append(convictions, models.Tenured{Ticker: ticker, Days: days})
@@ -76,32 +70,44 @@ func main() {
 
 	// Quick flips: exited within <= 10 days
 	quickFlips := []models.Tenured{}
-	for _, t := range removed {
-		fs := s.FirstSeen[t]
-		ls := s.LastSeen[t]
-		days := tenorDays(fs, ls)
-		if days <= 10 {
-			quickFlips = append(quickFlips, models.Tenured{Ticker: t, Days: days})
+	for ticker, firstSeen := range s.FirstSeen {
+		lastSeen := s.LastSeen[ticker]
+		days := tenorDays(firstSeen, lastSeen)
+		if lastSeen < latest && days <= 10 {
+			quickFlips = append(quickFlips, models.Tenured{Ticker: ticker, Days: days})
 		}
 	}
 
-	// Build template data
-	data := map[string]any{
-		"Date":        today,
-		"Added":       added,
-		"Removed":     removed,
-		"Convictions": convictions,
-		"QuickFlips":  quickFlips,
+	// Sector Pulse: stub until enrichment
+	sectorPulse := []map[string]string{}
+
+	// Forward Watchlist: union of radar + quick flips
+	watchlist := []map[string]string{}
+	for _, r := range radar {
+		watchlist = append(watchlist, map[string]string{"Ticker": r["Ticker"], "Reason": r["Note"]})
+	}
+	for _, q := range quickFlips {
+		watchlist = append(watchlist, map[string]string{"Ticker": q.Ticker, "Reason": "recent quick flip"})
 	}
 
-	md, err := render.Markdown("templates/daily.md.tmpl", data)
+	// Template data
+	data := map[string]any{
+		"WeekStart":   weekStart,
+		"WeekEnd":     weekEnd,
+		"Radar":       radar,
+		"Convictions": convictions,
+		"QuickFlips":  quickFlips,
+		"SectorPulse": sectorPulse,
+		"Watchlist":   watchlist,
+	}
+
+	md, err := render.Markdown("templates/weekly.md.tmpl", data)
 	must(err)
 
 	fmt.Println(md)
 
 	// --- write file ---
-	safeDate := strings.ReplaceAll(today, "/", "-")
-	outPath := fmt.Sprintf("out/daily-%s.md", safeDate)
+	outPath := fmt.Sprintf("out/weekly-%s.md", weekEnd)
 	if err := os.MkdirAll("out", 0o755); err != nil {
 		panic(err)
 	}
@@ -110,22 +116,10 @@ func main() {
 	}
 	fmt.Println("Wrote", outPath)
 
-	subj := fmt.Sprintf("In Play — %s", today)
+	subj := fmt.Sprintf("Weekly Playbook — %s → %s", weekStart, weekEnd)
 	if err := mailer.SendMarkdown(subj, md); err != nil {
 		panic(err)
 	}
-}
-
-func prevDateKey(st *models.State, today string) string {
-	keys := make([]string, 0, len(st.HoldingsByDay))
-	for k := range st.HoldingsByDay {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	if len(keys) == 0 {
-		return ""
-	}
-	return keys[len(keys)-1]
 }
 
 func diff(prev, today []string) ([]string, []string) {

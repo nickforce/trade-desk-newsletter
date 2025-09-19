@@ -10,6 +10,10 @@ on:
     - cron: '15 15 * * 0'    # Sunday 9:15am CT during CST (UTC-6)
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   daily:
     # Run only when triggered by weekday crons or manual dispatch

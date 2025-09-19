@@ -107,6 +107,14 @@ jobs:
         run: |
           node scripts/post-substack.mjs $(ls -t out/daily-*.md | head -n1)
 
+      - name: Upload debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-artifacts
+          path: out/
+
+
       # Open an issue if the session expired (poster failed)
       - name: Open Issue if session expired
         if: steps.build.outputs.changed == 'true' && steps.post.outcome == 'failure'

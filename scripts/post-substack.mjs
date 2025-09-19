@@ -40,22 +40,65 @@ const title = `${TITLE_PREFIX}${dateStr}`;
     timeout: 60000,
   });
 
-  // 2) Fill Title
-  const titleEl = page.getByTestId('post-title');
-  await titleEl.waitFor({ state: 'visible', timeout: 20000 });
+  // 2) Fill Title — with fallbacks
+  let titleEl = page.getByTestId('post-title').first();
+  try {
+    await titleEl.waitFor({ state: 'visible', timeout: 8000 });
+    console.log("✅ Found title via getByTestId('post-title')");
+  } catch {
+    console.log("⚠️ Primary title locator failed, trying fallbacks…");
+    const fallbackLocators = [
+      'textarea#post-title',
+      'input[placeholder*="Title"]',
+      'h1[contenteditable="true"]'
+    ];
+    for (const sel of fallbackLocators) {
+      const cand = page.locator(sel).first();
+      if (await cand.count()) {
+        titleEl = cand;
+        console.log(`✅ Found title via fallback: ${sel}`);
+        break;
+      }
+    }
+    await titleEl.waitFor({ state: 'visible', timeout: 8000 });
+  }
   await titleEl.click();
-  await titleEl.fill(title);
+  if (await titleEl.isEditable().catch(()=>false)) {
+    await titleEl.fill(title).catch(async () => { await page.keyboard.type(title); });
+  } else {
+    await page.keyboard.type(title);
+  }
 
   // 3) Fill Subtitle (optional)
   const subtitleEl = page.getByRole('textbox', { name: 'Add a subtitle…' });
   if (await subtitleEl.isVisible().catch(() => false)) {
     await subtitleEl.click();
     await subtitleEl.fill(SUBTITLE_TEXT);
+    console.log("✅ Filled subtitle");
   }
 
-  // 4) Fill Body
-  const bodyEl = page.getByRole('paragraph').first();
-  await bodyEl.waitFor({ state: 'visible', timeout: 20000 });
+  // 4) Fill Body — with fallbacks
+  let bodyEl = page.getByRole('paragraph').first();
+  try {
+    await bodyEl.waitFor({ state: 'visible', timeout: 8000 });
+    console.log("✅ Found body via getByRole('paragraph')");
+  } catch {
+    console.log("⚠️ Primary body locator failed, trying fallbacks…");
+    const fallbackLocators = [
+      'div[data-testid="editor"][contenteditable="true"]',
+      'div.ProseMirror[contenteditable="true"]',
+      'div[contenteditable="true"]'
+    ];
+    for (const sel of fallbackLocators) {
+      const cand = page.locator(sel).first();
+      if (await cand.count()) {
+        bodyEl = cand;
+        console.log(`✅ Found body via fallback: ${sel}`);
+        break;
+      }
+    }
+    await bodyEl.waitFor({ state: 'visible', timeout: 8000 });
+  }
   await bodyEl.click();
   await page.keyboard.type(content, { delay: 0 });
 
@@ -70,12 +113,10 @@ const title = `${TITLE_PREFIX}${dateStr}`;
       await cont.click();
       await page.waitForTimeout(2000);
 
-      // Actual publish button in your account
       const pubNow = page.getByRole('button', { name: 'Send to everyone now' }).first();
       if (await pubNow.isVisible().catch(() => false)) {
         console.log('👉 Clicking Send to everyone now…');
         await pubNow.click();
-        // wait extra to ensure publish completes
         await page.waitForTimeout(7000);
       } else {
         console.warn('⚠️ Send to everyone now button not found, left as draft.');
@@ -91,5 +132,18 @@ const title = `${TITLE_PREFIX}${dateStr}`;
   await browser.close();
 })().catch(async (err) => {
   console.error('ERROR:', err.message || err);
+  try {
+    await fs.promises.mkdir('out', { recursive: true });
+    // Save screenshot to debug in CI
+    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    const context = await browser.newContext({ storageState: STATE_PATH });
+    const page = await context.newPage();
+    await page.goto('https://nickjaguarvision.substack.com/publish/post?type=newsletter', { waitUntil: 'domcontentloaded' });
+    await page.screenshot({ path: 'out/failure.png', fullPage: true });
+    await browser.close();
+    console.log("🖼 Saved failure screenshot to out/failure.png");
+  } catch (e) {
+    console.warn("Could not save failure screenshot:", e.message);
+  }
   process.exit(1);
 });
